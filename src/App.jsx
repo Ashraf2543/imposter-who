@@ -660,24 +660,25 @@ function VotingScreen({ players, onResult, onBack }) {
 // ─── RESULT SCREEN ────────────────────────────────────────────────────────────
 function ResultScreen({ players, gameData, votes, onPlayAgain, onHome, onUpdateScores }) {
   const [revealed, setRevealed] = useState(false);
-  const [guess, setGuess] = useState("");
-  const [guessResult, setGuessResult] = useState(null);
   const [scored, setScored] = useState(false);
 
+  // Build tally
   const tally = players.reduce((a, p) => ({ ...a, [p]: 0 }), {});
-  Object.values(votes).forEach((v) => (tally[v] = (tally[v] || 0) + 1));
-  const mostVoted = Object.entries(tally).sort((a, b) => b[1] - a[1])[0]?.[0];
+  Object.values(votes).forEach((v) => { tally[v] = (tally[v] || 0) + 1; });
+
+  // Sort players by votes descending for display
+  const sorted = [...players].sort((a, b) => tally[b] - tally[a]);
+  const mostVoted = sorted[0];
+  const maxVotes = tally[mostVoted];
+
   const actualImposters = gameData.imposterIndices.map((i) => players[i]);
-  const caughtCorrectly = actualImposters.includes(mostVoted);
+
+  // ✅ Fixed: civilians win if ANY actual imposter has the most votes (handles ties)
+  const caughtCorrectly = actualImposters.some((imp) => tally[imp] === maxVotes);
 
   const handleReveal = () => {
     setRevealed(true);
     if (!scored) { onUpdateScores(caughtCorrectly ? "civilians" : "imposters"); setScored(true); }
-  };
-
-  const handleGuess = () => {
-    if (!guess.trim()) return;
-    setGuessResult(guess.trim().toLowerCase() === gameData.word.toLowerCase());
   };
 
   return (
@@ -688,11 +689,28 @@ function ResultScreen({ players, gameData, votes, onPlayAgain, onHome, onUpdateS
         <div />
       </div>
       <div className="result-body">
-        <div className="accused-card">
-          <div className="ac-label">Most accused</div>
-          <Avatar name={mostVoted} index={players.indexOf(mostVoted)} size={64} />
-          <div className="ac-name">{mostVoted}</div>
-          <div className="ac-votes">{tally[mostVoted]} vote{tally[mostVoted] !== 1 ? "s" : ""}</div>
+
+        {/* Vote breakdown — always visible */}
+        <div className="vote-breakdown-card">
+          <div className="vbc-title">🗳️ Vote Breakdown</div>
+          {sorted.map((p) => {
+            const isImp = actualImposters.includes(p);
+            const pct = maxVotes > 0 ? (tally[p] / players.length) * 100 : 0;
+            return (
+              <div key={p} className={`vbc-row ${isImp && revealed ? "vbc-imposter" : ""}`}>
+                <Avatar name={p} index={players.indexOf(p)} size={30} />
+                <span className="vbc-name">{p}</span>
+                <div className="vbc-bar-wrap">
+                  <div className="vbc-bar" style={{
+                    width: `${pct}%`,
+                    background: isImp && revealed ? "var(--accent)" : "var(--blue)"
+                  }} />
+                </div>
+                <span className="vbc-count">{tally[p]}</span>
+                {isImp && revealed && <span className="vbc-spy">🕵️</span>}
+              </div>
+            );
+          })}
         </div>
 
         {!revealed ? (
@@ -704,29 +722,26 @@ function ResultScreen({ players, gameData, votes, onPlayAgain, onHome, onUpdateS
             <div className={`verdict ${caughtCorrectly ? "v-win" : "v-lose"}`}>
               {caughtCorrectly ? "🎉 Civilians Win!" : "🕵️ Imposter Wins!"}
             </div>
+
+            <div className="result-explain">
+              {caughtCorrectly
+                ? `The group correctly voted out ${actualImposters.join(" & ")}!`
+                : mostVoted && actualImposters.includes(mostVoted)
+                  ? `It was a tie — the Imposter slipped through!`
+                  : `The Imposter fooled everyone. ${actualImposters.join(" & ")} got away!`
+              }
+            </div>
+
             <div className="actual-row">
               <span className="actual-label">The Imposter{actualImposters.length > 1 ? "s were" : " was"}</span>
               <span className="actual-names">{actualImposters.join(", ")}</span>
             </div>
+
             <div className="word-reveal-box">
               <div className="wrb-label">The Secret Word</div>
               <div className="wrb-word">{gameData.word}</div>
               <div className="wrb-cat">{gameData.category}</div>
             </div>
-
-            {!caughtCorrectly && guessResult === null && (
-              <div className="imposter-guess">
-                <div className="ig-title">🕵️ Imposters — can you guess the word?</div>
-                <div className="ig-row">
-                  <input className="text-input" placeholder="Your guess..."
-                    value={guess} onChange={(e) => setGuess(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleGuess()} />
-                  <button className="btn btn-primary" onClick={handleGuess}>Guess</button>
-                </div>
-              </div>
-            )}
-            {guessResult === true && <div className="guess-badge correct">🎯 Correct! Imposters still win!</div>}
-            {guessResult === false && <div className="guess-badge wrong">❌ Wrong! Civilians win after all!</div>}
 
             <div className="result-actions">
               <button className="btn btn-primary btn-lg" onClick={onPlayAgain}>Play Again</button>
