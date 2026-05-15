@@ -4,14 +4,17 @@ import { WORD_BANK, CATEGORIES, getRandomWord, getRandomCategory } from "./data/
 // ─── UTILITIES ────────────────────────────────────────────────────────────────
 const shuffle = (arr) => [...arr].sort(() => Math.random() - 0.5);
 
-function buildGame(players, category, settings) {
-  const chosenCategory = category === "🎲 Random" ? getRandomCategory() : category;
-  const word = getRandomWord(chosenCategory);
+function buildGame(players, selectedCategories, settings) {
+  // Build combined pool from all selected categories
+  const pool = selectedCategories.flatMap((cat) =>
+    (WORD_BANK[cat] || []).map((word) => ({ word, category: cat }))
+  );
+  const picked = pool[Math.floor(Math.random() * pool.length)];
   const count = settings.trollMode
     ? players.length
     : Math.min(settings.numImposters, players.length - 1);
   const indices = shuffle([...Array(players.length).keys()]).slice(0, count);
-  return { word, category: chosenCategory, imposterIndices: indices };
+  return { word: picked.word, category: picked.category, imposterIndices: indices };
 }
 
 // ─── ICONS ────────────────────────────────────────────────────────────────────
@@ -246,14 +249,27 @@ function PlayerSetupScreen({ onNext, onBack }) {
 
 // ─── CATEGORY SCREEN ──────────────────────────────────────────────────────────
 function CategoryScreen({ players, onStart, onBack }) {
-  const [sel, setSel] = useState("🎲 Random");
+  const [selectedCats, setSelectedCats] = useState([...CATEGORIES]); // all selected by default
   const [settings, setSettings] = useState({
-    numImposters: 1, trollMode: false, timerEnabled: false, timerSeconds: 30,
+    numImposters: 1, trollMode: false, timerEnabled: false, timerSeconds: 30, hintEnabled: false,
   });
+  const [error, setError] = useState("");
 
   const toggle = (k) => setSettings((s) => ({ ...s, [k]: !s[k] }));
-  const allCats = ["🎲 Random", ...CATEGORIES];
   const maxImposters = Math.max(1, Math.floor(players.length / 2));
+  const allSelected = selectedCats.length === CATEGORIES.length;
+
+  const toggleCat = (cat) => {
+    setError("");
+    setSelectedCats((prev) =>
+      prev.includes(cat) ? prev.filter((c) => c !== cat) : [...prev, cat]
+    );
+  };
+
+  const handleStart = () => {
+    if (selectedCats.length === 0) { setError("Select at least one category!"); return; }
+    onStart(selectedCats, settings);
+  };
 
   return (
     <div className="screen scroll-screen">
@@ -263,14 +279,31 @@ function CategoryScreen({ players, onStart, onBack }) {
         <div className="pill">{players.length} players</div>
       </div>
       <div className="cat-body">
-        <div className="section-label">Category</div>
-        <div className="cat-grid">
-          {allCats.map((c) => (
-            <button key={c} className={`cat-chip ${sel === c ? "active" : ""}`} onClick={() => setSel(c)}>
-              {c}
+        <div className="cat-section-header">
+          <div className="section-label" style={{ margin: 0 }}>Categories</div>
+          <div className="cat-header-actions">
+            <span className="cat-count-pill">{selectedCats.length}/{CATEGORIES.length}</span>
+            <button className="text-btn" style={{ fontSize: 12 }}
+              onClick={() => setSelectedCats(allSelected ? [] : [...CATEGORIES])}>
+              {allSelected ? "Clear all" : "Select all"}
             </button>
-          ))}
+          </div>
         </div>
+        <p className="hint-text" style={{ marginBottom: 10 }}>
+          Tap to select which categories to include. Word is picked randomly from your selection.
+        </p>
+        <div className="cat-grid">
+          {CATEGORIES.map((c) => {
+            const active = selectedCats.includes(c);
+            return (
+              <button key={c} className={`cat-chip ${active ? "active" : ""}`} onClick={() => toggleCat(c)}>
+                {active && <span className="cat-tick"><IconCheck /></span>}
+                {c}
+              </button>
+            );
+          })}
+        </div>
+        {error && <div className="error-pill" style={{ marginTop: 10 }}>{error}</div>}
 
         <div className="section-label" style={{ marginTop: 28 }}>Settings</div>
         <div className="settings-list">
@@ -321,10 +354,20 @@ function CategoryScreen({ players, onStart, onBack }) {
               </div>
             </div>
           )}
+
+          <div className="setting-row">
+            <div>
+              <div className="sr-name">💡 Imposter Hint</div>
+              <div className="sr-desc">Show the Imposter a subtle category hint</div>
+            </div>
+            <button className={`toggle-btn ${settings.hintEnabled ? "on" : ""}`} onClick={() => toggle("hintEnabled")}>
+              <div className="toggle-knob" />
+            </button>
+          </div>
         </div>
       </div>
       <div className="footer">
-        <button className="btn btn-primary btn-lg" onClick={() => onStart(sel, settings)}>
+        <button className="btn btn-primary btn-lg" onClick={handleStart}>
           Start Game <IconArrowRight />
         </button>
       </div>
@@ -333,7 +376,7 @@ function CategoryScreen({ players, onStart, onBack }) {
 }
 
 // ─── REVEAL SCREEN ────────────────────────────────────────────────────────────
-function RoleRevealScreen({ players, gameData, onGameStart, onBack }) {
+function RoleRevealScreen({ players, gameData, settings, onGameStart, onBack }) {
   const [idx, setIdx] = useState(0);
   const [revealed, setRevealed] = useState(false);
   const [allDone, setAllDone] = useState(false);
@@ -392,6 +435,12 @@ function RoleRevealScreen({ players, gameData, onGameStart, onBack }) {
               <div className="imposter-msg">
                 Blend in and fake your clue.<br />
                 <span className="imposter-sub">You don't know the word — but guess it correctly if caught!</span>
+                {settings?.hintEnabled && (
+                  <div className="imposter-hint-box">
+                    <span className="hint-label">💡 Hint</span>
+                    <span className="hint-value">The word is in <strong>{gameData.category}</strong></span>
+                  </div>
+                )}
               </div>
             )}
             <div className="role-card-actions">
@@ -737,14 +786,14 @@ export default function App() {
         <PlayerSetupScreen onNext={(p) => { setPlayers(p); go("category"); }} onBack={() => go("home")} />
       )}
       {screen === "category" && (
-        <CategoryScreen players={players} onStart={(cat, s) => {
+        <CategoryScreen players={players} onStart={(cats, s) => {
           setSettings(s);
-          setGameData(buildGame(players, cat, s));
+          setGameData(buildGame(players, cats, s));
           go("reveal");
         }} onBack={() => go("setup")} />
       )}
       {screen === "reveal" && gameData && (
-        <RoleRevealScreen players={players} gameData={gameData} onGameStart={() => go("playing")} onBack={() => go("category")} />
+        <RoleRevealScreen players={players} gameData={gameData} settings={settings} onGameStart={() => go("playing")} onBack={() => go("category")} />
       )}
       {screen === "playing" && (
         <PlayingScreen players={players} gameData={gameData} settings={settings} onVote={() => go("voting")} onBack={() => go("reveal")} />
